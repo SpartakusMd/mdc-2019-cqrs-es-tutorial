@@ -1,6 +1,7 @@
 {
   "require": {
     "php": "^7.0",
+    "ext-json": "*",
     "ext-pdo": "*",
     "ext-pdo_sqlite": "*",
     "bernard/bernard": "^1.0@DEV",
@@ -23,5 +24,13 @@
   },
   "scripts": {
     "serve": "php -S 0.0.0.0:8080 -t public/"
+  },
+  "require-dev": {
+    "behat/behat": "^3.3"
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Specification\\": "tests/Specification"
+    }
   }
 }

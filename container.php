@@ -11,6 +11,7 @@ use Bernard\QueueFactory;
 use Bernard\QueueFactory\PersistentFactory;
 use Building\Domain\Aggregate\Building;
 use Building\Domain\Command;
+use Building\Domain\DomainEvent;
 use Building\Domain\DomainEvent\CheckInAnomalyDetected;
 use Building\Domain\Repository\BuildingRepositoryInterface;
 use Building\Infrastructure\Repository\BuildingRepository;
@@ -25,6 +26,7 @@ use Prooph\Common\Event\ActionEventListenerAggregate;
 use Prooph\Common\Event\ProophActionEventEmitter;
 use Prooph\Common\Messaging\FQCNMessageFactory;
 use Prooph\Common\Messaging\NoOpMessageConverter;
+use Prooph\EventSourcing\AggregateChanged;
 use Prooph\EventSourcing\EventStoreIntegration\AggregateTranslator;
 use Prooph\EventStore\Adapter\Doctrine\DoctrineEventStoreAdapter;
 use Prooph\EventStore\Adapter\Doctrine\Schema\EventStoreSchema;
@@ -32,6 +34,7 @@ use Prooph\EventStore\Adapter\PayloadSerializer\JsonPayloadSerializer;
 use Prooph\EventStore\Aggregate\AggregateRepository;
 use Prooph\EventStore\Aggregate\AggregateType;
 use Prooph\EventStore\EventStore;
+use Prooph\EventStore\Stream\StreamName;
 use Prooph\EventStoreBusBridge\EventPublisher;
 use Prooph\EventStoreBusBridge\TransactionManager;
 use Prooph\ServiceBus\Async\MessageProducer;
@@ -242,6 +245,11 @@ return new ServiceManager([
                 }
             ];
         },
+        DomainEvent\UserCheckedIn::class . '-projectors' => function (ContainerInterface $container) : array {
+            return [
+                $container->get('project-checked-in-users'),
+            ];
+        },
         BuildingRepositoryInterface::class => function (ContainerInterface $container) : BuildingRepositoryInterface {
             return new BuildingRepository(
                 new AggregateRepository(
@@ -251,5 +259,33 @@ return new ServiceManager([
                 )
             );
         },
+        'project-checked-in-users' => function (ContainerInterface $container) : callable {
+            $eventStore = $container->get(EventStore::class);
+            return static function () use ($eventStore) {
+                /** @var AggregateChanged[] $history */
+                $history = $eventStore->loadEventsByMetadataFrom(new StreamName('event_stream'), [
+                    'aggregate_type' => Building::class,
+                ]);
+                /** @var array<string, array<string, null>> $usersInBuildings */
+                $usersInBuildings = [];
+                foreach ($history as $event) {
+                    if (! \array_key_exists($event->aggregateId(), $usersInBuildings)) {
+                        $usersInBuildings[$event->aggregateId()] = [];
+                    }
+                    if ($event instanceof DomainEvent\UserCheckedIn) {
+                        $usersInBuildings[$event->aggregateId()][$event->username()] = null;
+                    }
+                    if ($event instanceof DomainEvent\UserCheckedOut) {
+                        unset($usersInBuildings[$event->aggregateId()][$event->username()]);
+                    }
+                }
+                \array_walk($usersInBuildings, static function (array $users, string $buildingId) {
+                    \file_put_contents(
+                        __DIR__ . '/public/users-' . $buildingId . '.json',
+                        json_encode(array_keys($users))
+                    );
+                });
+            };
+        }
     ],
 ]);
